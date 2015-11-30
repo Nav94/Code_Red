@@ -1,2 +1,2 @@
 # Code_Red
-A wrapper around astronomical data reduction in Python. 
+A pipeline for automatic data reduction in Python.
