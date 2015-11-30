@@ -1,0 +1,281 @@
+from astropy.io import fits
+from astropy.modeling import models
+from msumastro import ImageFileCollection
+from ccdproc import Combiner, CCDData
+from ccdproc import cosmicray_lacosmic
+from matplotlib.colors import LogNorm
+import importlib
+import matplotlib.pyplot as plt
+import numpy as np
+import ccdproc
+
+#------------------------------------------------------------------------
+# Functions
+def open_images(imlist):
+    """
+    Opens the images in the CCDData format required for ccdproc.
+
+    Parameters
+    ----------
+    imlist: list of images to convert to CCDData format.
+    """
+    outimage_list = []
+    for image in imlist:
+        meta = image.header
+        outimage_list.append(ccdproc.CCDData(data=image.data, meta=meta, unit="adu"))
+    return outimage_list
+
+def overscan(imlist, overscan_section, h_keyword='oscan_sub', h_value=True, poly_order=1):
+    """
+    Subtracts overscan from specified images.
+
+    Parameters
+    ----------
+    imlist: list of images to subtract overscan from.
+    overscan_section: The section of overscan to be subtracted.
+    h_keyword and h_value: The keyword to be added to the header.
+    poly_order: The order of the polynomial to be fitted.
+    """
+    outimage_list = []
+    for count,image in enumerate(imlist):
+        if not (isinstance(image, CCDData)):
+            raise TypeError('image %d is not a CCDData object' % (count+1))
+        outimage_list.append(ccdproc.subtract_overscan(image, overscan_axis=1, fits_section = overscan_section, median=True, add_keyword={h_keyword: h_value}, model=models.Polynomial1D(poly_order)))
+    return outimage_list
+
+def prescan(imlist, prescan_section, poly_order=1):
+    """
+    Subtracts prescan from specified images.
+
+    Parameters
+    ----------
+    imlist: list of images to subtract prescan from.
+    prescan_section: The section of overscan to be subtracted.
+    h_keyword and h_value: The keyword to be added to the header.
+    poly_order: The order of the polynomial to be fitted.
+    """
+    outimage_list = []
+    for count,image in enumerate(imlist):
+        if not (isinstance(image, CCDData)):
+            raise TypeError('image %d is not a CCDData object' % (count+1))
+        outimage_list.append(ccdproc.subtract_overscan(image, overscan_axis=1, fits_section = prescan_section, median=True, add_keyword=None, model=models.Polynomial1D(poly_order)))  
+    return outimage_list
+
+def trim(imlist, trim_section, h_keyword='trim_sub', h_value=True):
+    """
+    Trims the image to the specified dimension. Usually the dimension of the CCD.
+
+    Parameters
+    ----------
+    imlist: list of images to trim section from.
+    trim_section: Section of the image to trim.
+    h_keyword and h_value: The keyword to be added to the header.
+    """
+    outimage_list = []
+    for count,image in enumerate(imlist):
+        if not (isinstance(image, CCDData)):
+            raise TypeError('image %d is not a CCDData object' % (count+1))
+        outimage_list.append(ccdproc.trim_image(image, fits_section = trim_section, add_keyword={h_keyword: h_value}))
+    return outimage_list
+
+def zero_combine(bias_list):
+    """
+    Combines all the bias frames.
+
+    Parameters
+    ----------
+    bias_list: The list of biases to be combined.
+    """
+    combiner = Combiner(bias_list)
+    master_bias = combiner.average_combine() 
+    return master_bias
+
+def bias_sub(imlist, master_bias, h_keyword='bias_sub', h_value='bias subtraction using master_bias'):
+    """
+    Subtracts the bias from the specified images.
+
+    Parameters
+    ----------
+    imlist: list of images to subtract bias.
+    master_bias: The combined bias frame.
+    h_keyword and h_value: The keyword to be added to the header.
+    """
+    outimage_list = []
+    for image in imlist:
+        if not (isinstance(image, CCDData)):
+            raise TypeError('image %d is not a CCDData object' % (count+1))
+        outimage_list.append(ccdproc.subtract_bias(image, master_bias, add_keyword = {h_keyword: h_value}))
+    return outimage_list
+
+def flat_correct(imlist, master_flat, h_keyword='flat_corr', h_value='flat fielding using master_flat'):
+    """
+    Divides the flats from the specified images.
+
+    Parameters
+    ----------
+    imlist: list of images to correct flat.
+    master_flat: The combined flat frame.
+    h_keyword and h_value: The keyword to be added to the header.
+    """
+    outimage_list = []
+    for image in imlist:
+        outimage_list.append(ccdproc.flat_correct(image, master_flat, add_keyword = {h_keyword: h_value}))
+    return outimage_list
+
+def cosmic_correct(imlist):
+    """
+    Corrects the images from cosmic rays.
+
+    Parameters
+    ----------
+    imlist: list of images to remove cosmic rays.
+    """
+    outimage_list = []
+    for image in imlist:
+        if not (isinstance(image, CCDData)):
+            raise TypeError('image %d is not a CCDData object' % (count+1))
+        outimage_list.append(cosmicray_lacosmic(image, thresh=5, mbox=11, rbox=11, gbox=5))
+        
+    return outimage_list
+
+def combine_norm_flats(trim_osc_flat):
+    """
+    Combines and normalizes the flat frames.
+
+    Parameters
+    ----------
+    trim_osc_flat: list of flat frames to combine and normalize.
+    """
+    flat_combiner = ccdproc.Combiner(trim_osc_flat)
+    
+    scaling_func = lambda arr: 1/np.ma.average(arr)
+    flat_combiner.scaling = scaling_func
+
+    master_flat = flat_combiner.median_combine()
+    return master_flat
+
+def process(image, bias_subtraction = True, overscan_corr = True, prescan_corr=True, trim_sec = True, flat_combine = True, cosmicray = True, flat_corr = True):
+    """
+    Main body of the code that processes all the images.
+
+    Parameters
+    ----------
+    image: list of objects to be processed
+
+    bias_subtraction: bool, optional
+                    If 'True', bias subtraction will be done for the list of images .
+
+    overscan_corr: bool, optional
+                  If 'True', overscan correction will be done for the list of images.
+
+    prescan_corr: bool, optional
+                If 'True', prescan correction will be done for the list of images.
+
+    trim_sec: bool, optional
+            If 'True', images will be trimmed according to the trim_section value.
+
+    flat_combine: bool, optional
+                If 'True', list of flat images will be median combined.
+
+    cosmicray: bool, optional
+             If 'True', the list of images will be corrected for cosmic rays.
+
+    flat_corr: bool, optional
+             If 'True', list of images will be corrected for flat.
+    """
+    if bias_subtraction:
+      image = bias_sub(image, master_bias, h_keyword='bias_sub', h_value='bias subtraction using master_bias')
+    
+    if overscan_corr:
+      image = overscan(image, overscan_section, h_keyword='oscan_sub', h_value=True, poly_order=1)
+    
+    if prescan_corr:
+      image = prescan(image, prescan_section, poly_order=1)
+   
+    if trim_sec:
+      image = trim(image, trim_section, h_keyword='trim_sub', h_value=True)
+    
+    if flat_combine:
+      image = combine_norm_flats(image)
+   
+    if cosmicray:
+      image = cosmic_correct(image)
+   
+    if flat_corr:
+      image = flat_correct(image, masterflat, h_keyword='flat_corr', h_value='flat fielding using master_flat')
+
+    return image
+
+def image_stat(image):
+    """
+    Provides the required statistics of the image.
+
+    Parameters
+    ----------
+    image: image for which statistical quantities are to be determined.
+    """
+    imstats = lambda dat: (dat.min(), dat.max(), dat.mean(), dat.std())
+
+    image_min, image_max, image_mean, image_std = imstats(np.asarray(image))
+    print image_mean
+  
+#------------------------------------------------------------------------
+instrument_list = ['ifosc', 'hfosc', 'aries'];
+
+instrument_name = raw_input("Which instrument are you using?? Choose from the list below: \n%s \n> " % instrument_list)
+
+if instrument_name in instrument_list:
+    inst = importlib.import_module(instrument_name)
+elif instrument_name not in instrument_list:
+    print "Oops!The instrument is not in the list. Exiting."
+    raise SystemExit()
+
+#Initializing data
+overscan_section = inst.overscan_section
+prescan_section = inst.prescan_section
+trim_section = inst.trim_section
+
+#------------------------------------------------------------------------
+#Loading files
+ifc = ImageFileCollection('.', keywords = '*')
+
+#loading bias
+bias_list = ifc.hdus(obstype = 'zero')
+if bias_list:
+    bias_list = open_images(bias_list)
+if not bias_list:
+    print "There are no bias frames available" 
+
+# loading flats & objects
+filters=inst.filters
+
+for ftr in filters:
+
+    print "Now processing filter: %s" % ftr
+
+    flat_list=ifc.hdus(filter = ftr, binx = inst.binx, biny = inst.biny, airmass = inst.airmass_flat)
+    if flat_list:
+        flat_list = open_images(flat_list)
+    if not flat_list:
+        print "There are no flats of filter: %s" % ftr
+        
+    object_list = ifc.hdus(filter = ftr, binx = inst.binx, biny = inst.biny, airmass = inst.airmass_obj)
+    if object_list:
+        object_list = open_images(object_list)
+    if not object_list:
+        print "There are no objects of filter: %s" % ftr
+        continue
+
+    master_bias = zero_combine(bias_list)
+    masterflat = process(flat_list, bias_subtraction = True, overscan_corr = True, prescan_corr = False, trim_sec = True, flat_combine = True, cosmicray = False, flat_corr = False)
+    image_stat(masterflat)
+    red_obj = process(object_list, bias_subtraction = True, overscan_corr = True, prescan_corr = False, trim_sec = True, flat_combine = False, cosmicray = False, flat_corr = True)
+    
+    reduced_obj={};
+    for i in range(1, len(red_obj)+1):
+        reduced_obj['redobj[%d]_%s.fits' % (i, ftr)]=0
+    redobj = reduced_obj.keys()
+
+    # Writing the reduced images to a fits file.
+    for obj,files in zip(red_obj,redobj):
+        obj.write(files)
