@@ -22,7 +22,8 @@ def open_images(imlist):
     outimage_list = []
     for image in imlist:
         meta = image.header
-        outimage_list.append(ccdproc.CCDData(data=image.data, meta=meta, unit="adu"))
+        data=image.data
+        outimage_list.append(ccdproc.CCDData(data, meta=meta, unit="adu"))
     return outimage_list
 
 def overscan(imlist, overscan_section, h_keyword='oscan_sub', h_value=True, poly_order=1):
