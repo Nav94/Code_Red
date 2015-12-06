@@ -1,0 +1,50 @@
+# Instrument-IFOSC details
+
+import astropy
+from astropy.io import fits
+from astropy.coordinates import SkyCoord
+from astropy import units as u
+
+print """
+Instrument: IFOSC
+Observatory: IGO
+"""
+
+latitude = '19.083 N'
+longitude = '73.667 E'
+timezone = '+5.5 G.M.T'
+binning = '1X1'
+
+def get_data(data='data', filename=None, header=None):   
+    if filename is not None:
+        hdu=fits.open(filename)
+        header=hdu[0].header
+        req_data = header[data]
+        
+    if header is not None:
+        req_data = header[data]
+    
+    return req_data
+    
+filters=['U', 'V', 'B', 'R', 'I']
+
+scale_low=0.01
+scale_high=0.2
+
+filename_science=raw_input("name of the science frame: ")
+filename_flat=raw_input("name of the flat frame: ")
+
+ra=get_data(data='RA', filename=filename_science)
+dec=get_data(data='RA', filename=filename_science)
+c = SkyCoord(ra, dec, unit=(u.hourangle, u.deg))
+ra_deg, dec_deg=(c.ra.deg, c.dec.deg)
+
+overscan_section = "[2109:2168, 1:2048]"
+prescan_section = "[1:60, 1:2048]"
+trim_section = '[61:2108, 1:2048]'
+
+binx=get_data(data='BINX', filename=filename_science)
+biny=get_data(data='BINY', filename=filename_science)
+
+airmass_obj=get_data(data='AIRMASS', filename=filename_science)
+airmass_flat=get_data(data='AIRMASS', filename=filename_flat)
